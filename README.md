@@ -9,8 +9,9 @@ by the bundled C++ engine.
 
 Input and output are `movingpandas.TrajectoryCollection` objects. Input fixes
 must have a datetime index, a trajectory-ID column exposed by MovingPandas, and
-numeric projected coordinate columns named `utm_x` and `utm_y` in metres. These
-columns can be added by an upstream UTM-conversion MoveApp.
+a defined coordinate reference system. Before segmentation, the App selects an
+appropriate WGS84 UTM zone independently for each animal and adds `utm_x`,
+`utm_y`, and `utm_crs`; the original geometry and CRS remain unchanged.
 
 The output retains the input fixes and adds the common hmmcma annotation
 columns:
@@ -90,7 +91,8 @@ leak between animals.
 
 ## Errors and null handling
 
-The App reports an error when required UTM columns are absent, no trajectory
-sequence has enough valid fixes, feature numbers are unknown, criteria syntax
-is invalid, or the number of rules differs from `num_states`. Invalid fixes and
-too-short trajectory fragments are retained as unmodelled rather than removed.
+The App reports an error when the input CRS or valid geometry is absent, no
+trajectory sequence has enough valid fixes, feature numbers are unknown,
+criteria syntax is invalid, or the number of rules differs from `num_states`.
+Invalid fixes and too-short trajectory fragments are retained as unmodelled
+rather than removed.

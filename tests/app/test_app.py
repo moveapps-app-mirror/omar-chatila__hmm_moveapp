@@ -7,7 +7,7 @@ import movingpandas as mpd
 import numpy as np
 import pandas as pd
 
-from app.app import App, _normalise_unmodelled
+from app.app import App, _add_utm, _normalise_unmodelled
 from app.configuration import parse_features, parse_rules
 from hmmcma import AnnotationResult, Feature
 from sdk.moveapps_io import MoveAppsIo
@@ -47,6 +47,31 @@ class AppTest(unittest.TestCase):
         self.assertEqual(len(points), 12)
         self.assertTrue(set(points.state).issubset({-1, 0, 1}))
         self.assertGreater(os.path.getsize(os.path.join(self.artifacts.name, "state_plot.png")), 0)
+
+    def test_utm_columns_are_calculated_independently_per_animal(self):
+        times = list(pd.date_range("2026-01-01", periods=3, freq="min", name="timestamp")) * 2
+        points = gpd.GeoDataFrame(
+            {
+                "animal_id": ["west"] * 3 + ["east"] * 3,
+                "longitude": [7.0, 7.01, 7.02, 25.0, 25.01, 25.02],
+                "latitude": [51.0, 51.01, 51.02, 60.0, 60.01, 60.02],
+            },
+            geometry=gpd.points_from_xy(
+                [7.0, 7.01, 7.02, 25.0, 25.01, 25.02],
+                [51.0, 51.01, 51.02, 60.0, 60.01, 60.02],
+            ),
+            index=pd.DatetimeIndex(times, name="timestamp"),
+            crs="EPSG:4326",
+        )
+        source = mpd.TrajectoryCollection(points, traj_id_col="animal_id")
+
+        output = _add_utm(source).to_point_gdf()
+
+        self.assertTrue({"utm_x", "utm_y", "utm_crs"}.issubset(output.columns))
+        self.assertEqual(set(output.loc[output.animal_id == "west", "utm_crs"]), {"EPSG:32632"})
+        self.assertEqual(set(output.loc[output.animal_id == "east", "utm_crs"]), {"EPSG:32635"})
+        self.assertEqual(output.crs, points.crs)
+        self.assertNotIn("utm_x", source.to_point_gdf().columns)
 
     def test_criteria_method_uses_cpp_rules_and_adds_state(self):
         output = self.sut.execute(

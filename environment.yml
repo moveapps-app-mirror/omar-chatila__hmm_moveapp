@@ -3,12 +3,18 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
+  - pip
   - pandas
+  - numpy
   - geopandas
   - movingpandas
+  - pyproj
+  - matplotlib
+  - compilers
+  - cmake
   - pluggy
   - python-dotenv
   - deprecated
 
   - pip:
-      - "hmmcma @ git+https://github.com/Omar-Chatila/cma_hmm.git@main"
+    - "hmmcma @ git+https://github.com/Omar-Chatila/cma_hmm.git@main"
