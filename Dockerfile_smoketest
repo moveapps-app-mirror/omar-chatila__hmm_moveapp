@@ -4,13 +4,10 @@ FROM condaforge/miniforge3:latest
 LABEL org.opencontainers.image.authors="us@couchbits.com"
 LABEL org.opencontainers.image.vendor="couchbits GmbH"
 
-# if you need to install any OS libraries use the following snippet
-# USER root
-# RUN apt-get update \
-#     && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-#     # install qgis
-#     lib-a lib-b \
-# ./en os-lib install snippet
+# Required while pip builds hmmcma's static C++ criteria library.
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends binutils && \
+    rm -rf /var/lib/apt/lists/*
 
 # create working dir
 ENV PROJECT_DIR=/opt/co-pilot-python

@@ -2,6 +2,13 @@ FROM condaforge/miniforge3:latest
 LABEL org.opencontainers.image.authors="us@couchbits.com"
 LABEL org.opencontainers.image.vendor="couchbits GmbH"
 
+# hmmcma builds its criteria backend as a static C++ library. The compiler
+# packages from conda-forge provide a prefixed archiver, but CMake also expects
+# the conventional `ar` executable while pip builds the wheel.
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends binutils && \
+    rm -rf /var/lib/apt/lists/*
+
 ENV PROJECT_DIR /moveapps-python-sdk
 ENV ENV_PREFIX=${PROJECT_DIR}/conda
 
