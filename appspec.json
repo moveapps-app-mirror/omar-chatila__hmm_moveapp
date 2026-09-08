@@ -2,30 +2,49 @@
   "version": "1.2",
   "settings": [
     {
-      "id": "app-name",
-      "name": "App Name",
-      "description": "You can personalize the app name.",
-      "default": "Python SDK",
-      "type": "STRING"
+      "id": "method",
+      "name": "Segmentation method",
+      "description": "Choose a data-driven Hidden Markov Model or the rule-based criteria segmentation implemented by the hmmcma C++ backend.",
+      "defaultValue": "hmm",
+      "type": "RADIOBUTTONS",
+      "options": [
+        {
+          "value": "hmm",
+          "displayText": "Hidden Markov Model"
+        },
+        {
+          "value": "criteria",
+          "displayText": "Criteria-based segmentation"
+        }
+      ]
     },
     {
-      "id": "year",
-      "name": "The year",
-      "description": "Enter the year for which you want to keep the data",
-      "defaultValue": 1960,
+      "id": "num_states",
+      "name": "Number of states",
+      "description": "HMM: number of latent states. Criteria method: number of semicolon-separated rules in Criteria rules.",
+      "defaultValue": 3,
       "type": "INTEGER"
     },
     {
-      "id": "auxiliary-file-a",
-      "name": "Your message",
-      "description": "You can personalize the app by providing a file.",
-      "type": "USER_FILE"
-    }
-  ],
-  "providedAppFiles": [
+      "id": "features",
+      "name": "HMM features",
+      "description": "Comma-separated feature numbers (HMM only): 1 SPEED, 2 DISTANCE, 3 TURN ANGLE, 4 DIRECTION, 5 ANGULAR DIFFERENCE, 6 PERSISTENCE VELOCITY, 7 TERRAIN. Example: 1,3. TERRAIN requires a numeric terrain column.",
+      "defaultValue": "1,3",
+      "type": "STRING"
+    },
     {
-      "settingId": "auxiliary-file-a",
-      "from": "resources/auxiliary/user-files/provided-app-files/auxiliary-file-a/sample.txt"
+      "id": "criteria_rules",
+      "name": "Criteria rules",
+      "description": "Criteria method only. One rule per state, separated by semicolons: label:criterion=value. Combine criteria within a rule with & (all), | (any), or prefix one with ! (not). Available criteria: disk (metres), minimum_hops, maximum_hops, minimum_duration (seconds), speed (m/s range), turning_angle (degree range), heading (degree range), and the *_with_outliers variants with threshold,outlier-count. Example: resting:disk=100; travelling:minimum_hops=2&heading=35; foraging:maximum_hops=6",
+      "defaultValue": "resting:disk=100; travelling:minimum_hops=2&heading=35; foraging:maximum_hops=6",
+      "type": "STRING"
+    },
+    {
+      "id": "lfill",
+      "name": "Fill with last state",
+      "description": "Carry the last modelled state forward into otherwise unmodelled fixes, separately for each trajectory. If disabled, unmodelled fixes keep state -1.",
+      "defaultValue": false,
+      "type": "CHECKBOX"
     }
   ],
   "license": {
@@ -33,15 +52,17 @@
   },
   "language": "eng",
   "keywords": [
-    "example",
-    "template"
+    "behaviour",
+    "segmentation",
+    "hidden Markov model",
+    "movement ecology"
   ],
   "people": [
     {
-      "firstName": "Charles",
+      "firstName": "Omar",
       "middleInitials": null,
-      "lastName": "Darwin",
-      "email": "creator@example.com",
+      "lastName": "Chatila",
+      "email": "omar.chatila@tu-dortmund.de",
       "roles": [
         "author",
         "creator"
@@ -50,19 +71,5 @@
       "affiliation": null,
       "affiliationRor": null
     }
-  ],
-  "funding": [
-    {
-      "name": "funder name",
-      "comment": "grant for App"
-    }
-  ],
-  "references": [
-    {
-      "type": "IsDescribedBy",
-      "note": "Darwin, C. 1900. The creation. Journal XY. 1-2",
-      "url": "https://anylink.xyz"
-    }
   ]
 }
-

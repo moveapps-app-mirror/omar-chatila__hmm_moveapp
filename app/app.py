@@ -1,56 +1,107 @@
-from sdk.moveapps_spec import hook_impl
-from sdk.moveapps_io import MoveAppsIo
-from movingpandas import TrajectoryCollection
+"""MoveApps entry point for behavioural-state annotation."""
+
+from __future__ import annotations
+
 import logging
-import matplotlib.pyplot as plt
 
-# showcase for importing functions from another .py file (in this case from "./app/getGeoDataFrame.py")
-from app.getGeoDataFrame import get_GDF
+import pandas as pd
+from movingpandas import TrajectoryCollection
+
+from hmmcma import HMM, CriterionAnnotator
+from sdk.moveapps_io import MoveAppsIo
+from sdk.moveapps_spec import hook_impl
+
+from app.configuration import parse_features, parse_rules
 
 
-class App(object):
+LOGGER = logging.getLogger(__name__)
 
-    def __init__(self, moveapps_io):
+
+class App:
+    def __init__(self, moveapps_io: MoveAppsIo):
         self.moveapps_io = moveapps_io
 
     @hook_impl
     def execute(self, data: TrajectoryCollection, config: dict) -> TrajectoryCollection:
+        """Annotate input fixes and return them with a numeric ``state`` column."""
+        method = str(config.get("method", "hmm")).strip().lower()
+        num_states = _positive_integer(config.get("num_states", 3), "num_states")
 
-        logging.info(f'Welcome to the {config}')
-
-        """Your app code goes here"""
-
-        # showcase injecting App settings (parameter `year`)
-        data_gdf = get_GDF(data)  # translate the TrajectoryCollection to a GeoDataFrame
-        logging.info(f'Subsetting data for {config["year"]}')
-        # subset the data to only contain the specified year
-        if config["year"] in data_gdf.index.year:
-            result = data_gdf[data_gdf.index.year == config["year"]]
-        else:
-            result = None
-
-        # showcase creating an artifact
-        if result is not None:
-            result.plot(column=data.get_traj_id_col(), alpha=0.5)
-            plot_file = self.moveapps_io.create_artifacts_file("plot.png")
-            plt.savefig(plot_file)
-            logging.info(f'saved plot to {plot_file}')
-        else:
-            logging.warning("Nothing to plot")
-
-        # showcase accessing auxiliary files
-        auxiliary_file_a = MoveAppsIo.get_auxiliary_file_path("auxiliary-file-a")
-        with open(auxiliary_file_a, 'r') as f:
-            logging.info(f.read())
-
-        # Translate the result back to a TrajectoryCollection
-        if result is not None:
-            result = TrajectoryCollection(
-                result,
-                traj_id_col=data.get_traj_id_col(),
-                t=data.to_point_gdf().index.name,
-                crs=data.get_crs()
+        if method == "hmm":
+            features = parse_features(config.get("features", "1,3"))
+            annotator = HMM(features=features, num_states=num_states)
+            LOGGER.info(
+                "Running HMM with %s states and features: %s",
+                num_states,
+                ", ".join(feature.value for feature in features),
             )
+        elif method == "criteria":
+            rules = parse_rules(config.get("criteria_rules", ""), num_states)
+            annotator = CriterionAnnotator(rules)
+            LOGGER.info(
+                "Running criteria-based segmentation with %s states: %s",
+                num_states,
+                ", ".join(rule.label for rule in rules),
+            )
+        else:
+            raise ValueError("Unknown method. Choose 'hmm' or 'criteria'.")
 
-        # return the resulting data for next Apps in the Workflow
-        return result
+        result = annotator.annotate(data)
+        result = _normalise_unmodelled(result, method, _as_boolean(config.get("lfill", False)))
+
+        plot_path = self.moveapps_io.create_artifacts_file("state_plot.png")
+        annotator.plot(plot_path, annotation=result, title="Behavioural states")
+        LOGGER.info("Saved state plot artifact to %s", plot_path)
+        return result.trajectory_collection
+
+
+def _positive_integer(value, name: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a positive integer.") from exc
+    if parsed < 1:
+        raise ValueError(f"{name} must be a positive integer.")
+    return parsed
+
+
+def _as_boolean(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalised = value.strip().lower()
+        if normalised in {"true", "1", "yes", "on"}:
+            return True
+        if normalised in {"false", "0", "no", "off", ""}:
+            return False
+    return bool(value)
+
+
+def _normalise_unmodelled(result, method: str, lfill: bool):
+    """Use -1 for unmodelled points and optionally carry states forward per track."""
+    collection = result.trajectory_collection
+    points = collection.to_point_gdf().copy()
+    id_col = collection.get_traj_id_col()
+    states = pd.to_numeric(points["state"], errors="coerce").fillna(-1).astype(int)
+
+    # CriterionAnnotator reserves zero for its "unclassified" result. HMM zero
+    # is a valid model state and must therefore remain untouched.
+    if method == "criteria":
+        states = states.mask(states == 0, -1)
+        if "segment_name" in points.columns:
+            points.loc[states < 0, "segment_name"] = pd.NA
+
+    if lfill:
+        modelled = states.mask(states < 0)
+        states = modelled.groupby(points[id_col], sort=False, dropna=False).ffill().fillna(-1).astype(int)
+        if "segment_name" in points.columns:
+            names = points["segment_name"].mask(states < 0)
+            points["segment_name"] = names.groupby(points[id_col], sort=False, dropna=False).ffill()
+
+    points["state"] = states
+    points["cluster"] = states
+    result.labels = states.to_numpy()
+    result.metadata.setdefault("state_names", {})[-1] = "unmodelled"
+    result.metadata["lfill"] = lfill
+    result.trajectory_collection = TrajectoryCollection(points, traj_id_col=id_col)
+    return result

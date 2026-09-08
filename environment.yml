@@ -1,4 +1,4 @@
-name: moveapps-python-sdk
+name: hmm-moveapp-sdk
 channels:
   - conda-forge
 dependencies:
@@ -9,3 +9,6 @@ dependencies:
   - pluggy
   - python-dotenv
   - deprecated
+
+  - pip:
+      - "hmmcma @ git+https://github.com/Omar-Chatila/cma_hmm.git@main"

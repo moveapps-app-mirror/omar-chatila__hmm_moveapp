@@ -1,135 +1,117 @@
-import unittest
 import os
-from tests.config.definitions import ROOT_DIR
-from app.app import App
-from sdk.moveapps_io import MoveAppsIo
-import pandas as pd
+import unittest
+from tempfile import TemporaryDirectory
+
+import geopandas as gpd
 import movingpandas as mpd
+import numpy as np
+import pandas as pd
+
+from app.app import App, _normalise_unmodelled
+from app.configuration import parse_features, parse_rules
+from hmmcma import AnnotationResult, Feature
+from sdk.moveapps_io import MoveAppsIo
 
 
-class MyTestCase(unittest.TestCase):
+def trajectory_collection():
+    times = pd.date_range("2026-01-01", periods=12, freq="min", name="timestamp")
+    x = np.r_[np.arange(4), np.arange(4) + 50, np.arange(4) + 54].astype(float)
+    points = gpd.GeoDataFrame(
+        {
+            "animal_id": ["fox"] * len(times),
+            "utm_x": x,
+            "utm_y": np.zeros(len(times)),
+        },
+        geometry=gpd.points_from_xy(x, np.zeros(len(times))),
+        index=times,
+        crs="EPSG:32632",
+    )
+    return mpd.TrajectoryCollection(points, traj_id_col="animal_id")
 
-    def setUp(self) -> None:
-        os.environ['APP_ARTIFACTS_DIR'] = os.path.join(ROOT_DIR, 'tests/resources/output')
+
+class AppTest(unittest.TestCase):
+    def setUp(self):
+        self.artifacts = TemporaryDirectory()
+        self.addCleanup(self.artifacts.cleanup)
+        os.environ["APP_ARTIFACTS_DIR"] = self.artifacts.name
         self.sut = App(moveapps_io=MoveAppsIo())
 
-    def test_app_runs(self):
-        # prepare
-        data: mpd.TrajectoryCollection = pd.read_pickle(os.path.join(ROOT_DIR, 'tests/resources/app/input4_LatLon.pickle'))
-        config: dict = {
-            "year": 2014
-        }
-
-        # execute
-        self.sut.execute(data=data, config=config)
-
-    def test_app_config(self):
-        # prepare
-        config = {
-            "year": 2014
-        }
-
-        # execute
-        actual = config
-
-        # verify
-        self.assertEqual(2014, actual["year"])
-
-    def test_year_present(self):
-        # prepare input data
-        df = pd.DataFrame([
-            {'timestamp_utc': "2001-06-11 09:00:00", 'coords_x': 1, 'coords_y': 5, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2001-07-12 09:00:00", 'coords_x': 2, 'coords_y': 4, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2002-08-13 09:00:00", 'coords_x': 3, 'coords_y': 3, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2002-09-14 09:00:00", 'coords_x': 4, 'coords_y': 2, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2002-10-15 09:00:00", 'coords_x': 5, 'coords_y': 1, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2000-06-11 09:00:00", 'coords_x': 1, 'coords_y': 5, 'track_id': 'ID_2'},
-            {'timestamp_utc': "2000-07-12 09:00:00", 'coords_x': 2, 'coords_y': 4, 'track_id': 'ID_2'},
-            {'timestamp_utc': "2001-08-13 09:00:00", 'coords_x': 3, 'coords_y': 3, 'track_id': 'ID_2'},
-            {'timestamp_utc': "2001-09-14 09:00:00", 'coords_x': 4, 'coords_y': 2, 'track_id': 'ID_2'},
-            {'timestamp_utc': "2001-10-15 09:00:00", 'coords_x': 5, 'coords_y': 1, 'track_id': 'ID_2'}
-        ])
-        input = mpd.TrajectoryCollection(
-            df,
-            traj_id_col='track_id',
-            t='timestamp_utc',
-            crs='epsg:4326',
-            x='coords_x', y='coords_y'
+    def test_hmm_adds_state_and_plot_artifact(self):
+        output = self.sut.execute(
+            trajectory_collection(),
+            {"method": "hmm", "num_states": 2, "features": "1,3", "lfill": False},
         )
 
-        # prepare configuration
-        config = {
-            "year": 2001
-        }
+        points = output.to_point_gdf()
+        self.assertIn("state", points)
+        self.assertEqual(len(points), 12)
+        self.assertTrue(set(points.state).issubset({-1, 0, 1}))
+        self.assertGreater(os.path.getsize(os.path.join(self.artifacts.name, "state_plot.png")), 0)
 
-        # prepare expected data
-        df_e = pd.DataFrame([
-            {'timestamp_utc': "2001-06-11 09:00:00", 'coords_x': 1, 'coords_y': 5, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2001-07-12 09:00:00", 'coords_x': 2, 'coords_y': 4, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2001-08-13 09:00:00", 'coords_x': 3, 'coords_y': 3, 'track_id': 'ID_2'},
-            {'timestamp_utc': "2001-09-14 09:00:00", 'coords_x': 4, 'coords_y': 2, 'track_id': 'ID_2'},
-            {'timestamp_utc': "2001-10-15 09:00:00", 'coords_x': 5, 'coords_y': 1, 'track_id': 'ID_2'}
-        ])
-        expected = mpd.TrajectoryCollection(
-            df_e,
-            traj_id_col='track_id',
-            t='timestamp_utc',
-            crs='epsg:4326',
-            x='coords_x', y='coords_y'
+    def test_criteria_method_uses_cpp_rules_and_adds_state(self):
+        output = self.sut.execute(
+            trajectory_collection(),
+            {
+                "method": "criteria",
+                "num_states": 2,
+                "criteria_rules": "resting:disk=5; moving:!disk=5",
+                "lfill": False,
+            },
         )
 
-        # execute
-        actual = self.sut.execute(data=input, config=config)
+        points = output.to_point_gdf()
+        self.assertTrue({"state", "segment_name", "segment_id", "change_point"}.issubset(points.columns))
+        self.assertNotIn(0, set(points.state))
+        self.assertGreater(os.path.getsize(os.path.join(self.artifacts.name, "state_plot.png")), 0)
 
-        # verify timestamps
-        self.assertEqual(actual.to_point_gdf().index.strftime("%Y-%m-%d %H:%M:%S").tolist(),expected.to_point_gdf().index.strftime("%Y-%m-%d %H:%M:%S").tolist())
+    def test_lfill_is_per_trajectory_and_does_not_fill_leading_points(self):
+        times = pd.date_range("2026-01-01", periods=6, freq="min", name="timestamp")
+        points = gpd.GeoDataFrame(
+            {
+                "animal_id": ["a"] * 3 + ["b"] * 3,
+                "state": [-1, 2, -1, -1, 4, -1],
+                "cluster": [-1, 2, -1, -1, 4, -1],
+                "segment_id": [-1, 0, -1, -1, 1, -1],
+                "change_point": [False] * 6,
+                "utm_x": range(6),
+                "utm_y": [0] * 6,
+            },
+            geometry=gpd.points_from_xy(range(6), [0] * 6),
+            index=times,
+            crs="EPSG:32632",
+        )
+        collection = mpd.TrajectoryCollection(points, traj_id_col="animal_id")
+        result = AnnotationResult(collection, np.asarray(points.state), {}, {})
 
-        # verify track ids
-        self.assertEqual(actual.to_point_gdf()[actual.get_traj_id_col()].unique().tolist(), expected.to_point_gdf()[expected.get_traj_id_col()].unique().tolist())
+        actual = _normalise_unmodelled(result, "hmm", True).trajectory_collection.to_point_gdf()
 
-    def test_year_not_present(self):
-        # prepare input data
-        df = pd.DataFrame([
-            {'timestamp_utc': "2001-06-11 09:00:00", 'coords_x': 1, 'coords_y': 5, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2001-07-12 09:00:00", 'coords_x': 2, 'coords_y': 4, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2002-08-13 09:00:00", 'coords_x': 3, 'coords_y': 3, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2002-09-14 09:00:00", 'coords_x': 4, 'coords_y': 2, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2002-10-15 09:00:00", 'coords_x': 5, 'coords_y': 1, 'track_id': 'ID_1'},
-            {'timestamp_utc': "2000-06-11 09:00:00", 'coords_x': 1, 'coords_y': 5, 'track_id': 'ID_2'},
-            {'timestamp_utc': "2000-07-12 09:00:00", 'coords_x': 2, 'coords_y': 4, 'track_id': 'ID_2'},
-            {'timestamp_utc': "2001-08-13 09:00:00", 'coords_x': 3, 'coords_y': 3, 'track_id': 'ID_2'},
-            {'timestamp_utc': "2001-09-14 09:00:00", 'coords_x': 4, 'coords_y': 2, 'track_id': 'ID_2'},
-            {'timestamp_utc': "2001-10-15 09:00:00", 'coords_x': 5, 'coords_y': 1, 'track_id': 'ID_2'}
-        ])
-        input = mpd.TrajectoryCollection(
-            df,
-            traj_id_col='track_id',
-            t='timestamp_utc',
-            crs='epsg:4326',
-            x='coords_x', y='coords_y'
+        self.assertEqual(actual.state.tolist(), [-1, 2, 2, -1, 4, 4])
+
+
+class ConfigurationTest(unittest.TestCase):
+    def test_feature_numbers_are_parsed_and_deduplicated(self):
+        self.assertEqual(parse_features("1, 3 1"), (Feature.SPEED, Feature.TURN_ANGLE))
+
+    def test_unknown_feature_number_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Unknown feature number"):
+            parse_features("1,9")
+
+    def test_compound_criteria_and_state_count_are_parsed(self):
+        rules = parse_rules(
+            "resting:disk=100&minimum_duration=3600; moving:speed_with_outliers=5,1",
+            2,
         )
 
-        # prepare configuration
-        config = {
-            "year": 2100
-        }
+        self.assertEqual([rule.label for rule in rules], ["resting", "moving"])
 
-        # execute
-        actual = self.sut.execute(data=input, config=config)
+    def test_criteria_rule_count_must_match_states(self):
+        with self.assertRaisesRegex(ValueError, "exactly 3"):
+            parse_rules("resting:disk=100; moving:speed=5", 3)
 
-        # verify
-        self.assertIsNone(actual)
+    def test_mixed_boolean_operators_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "mixes"):
+            parse_rules("state:disk=100&minimum_hops=2|heading=30", 1)
 
-    """
-    # Use this test if the App should return the input data
-    def test_app_returns_input(self):
-        # prepare
-        expected: mpd.TrajectoryCollection = pd.read_pickle(os.path.join(ROOT_DIR, 'tests/resources/app/input2_LatLon.pickle'))
-        config: dict = {}
 
-        # execute
-        actual = self.sut.execute(data=expected, config=config)
-
-        # verif
-        self.assertEqual(expected, actual)
-    """
+if __name__ == "__main__":
+    unittest.main()
